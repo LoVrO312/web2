@@ -4,7 +4,7 @@ const { Pool } = require('pg');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 const { auth: jwtCheck, requiredScopes, UnauthorizedError } = require('express-oauth2-jwt-bearer');
-
+const { auth } = require('express-openid-connect');
 
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
@@ -16,6 +16,18 @@ const db = new Pool({
 });
 
 const app = express();
+
+// OIDC prijava automatski dodaje rute /login i /logout
+app.use(auth({
+  authRequired: false,  // stranice su javne, osim onih koje sami zaštitimo
+  auth0Logout: true,   // odjava odjavljuje i s Auth0, ne samo iz aplikacije
+  baseURL: BASE_URL,
+  issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
+  clientID: process.env.AUTH0_CLIENT_ID,
+  clientSecret: process.env.AUTH0_CLIENT_SECRET,
+  secret: process.env.SESSION_SECRET,
+  authorizationParams: { response_type: 'code', scope: 'openid profile email' },
+}));
 
 // Provjerava M2M token: potpis, issuer, audience i rok trajanja
 const checkToken = jwtCheck({
@@ -45,10 +57,15 @@ app.get('/', async (req, res) => {
   const { rows } = await db.query(
     "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'ACTIVE') AS active FROM passes"
   );
+  const loggedIn = req.oidc.isAuthenticated();
   res.send(`
     <h1>Propusnice</h1>
     <p>Ukupno propusnica: <b>${rows[0].total}</b></p>
     <p>Aktivnih propusnica: <b>${rows[0].active}</b></p>
+    ${loggedIn
+      ? `<p>Prijavljeni ste kao ${req.oidc.user.email || req.oidc.user.name}.</p>
+         <p><a href="/logout">Odjava</a></p>`
+      : `<p><a href="/login">Prijava</a></p>`}
   `);
 });
 
