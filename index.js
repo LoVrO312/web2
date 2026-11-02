@@ -1,6 +1,10 @@
 require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
+const crypto = require('crypto');
+const QRCode = require('qrcode');
+const { auth: jwtCheck, requiredScopes, UnauthorizedError } = require('express-oauth2-jwt-bearer');
+
 
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
@@ -13,6 +17,13 @@ const db = new Pool({
 
 const app = express();
 
+// Provjerava M2M token: potpis, issuer, audience i rok trajanja
+const checkToken = jwtCheck({
+  audience: process.env.AUTH0_AUDIENCE,
+  issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
+});
+
+
 app.get('/', async (req, res) => {
   const { rows } = await db.query(
     "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'ACTIVE') AS active FROM passes"
@@ -22,6 +33,34 @@ app.get('/', async (req, res) => {
     <p>Ukupno propusnica: <b>${rows[0].total}</b></p>
     <p>Aktivnih propusnica: <b>${rows[0].active}</b></p>
   `);
+});
+
+app.post('/passes', checkToken, requiredScopes('create:passes'), express.json(), async (req, res) => {
+  const { name, document } = req.body || {};
+  if (typeof name !== 'string' || !name.trim() || typeof document !== 'string' || !document.trim()) {
+    return res.status(400).json({ error: 'ime i dokument su obavezni' });
+  }
+
+  const id = crypto.randomUUID();
+  await db.query(
+    'INSERT INTO passes (id, name, document) VALUES ($1, $2, $3)',
+    [id, name.trim(), document.trim()]
+  );
+
+  const png = await QRCode.toBuffer(`${BASE_URL}/info/${id}`);
+  res.status(201).location(`${BASE_URL}/passes/${id}`).type('image/png').send(png);
+});
+
+app.use((err, req, res, next) => {
+  if (err instanceof UnauthorizedError) {
+    if (err.headers) res.set(err.headers);
+    return res.status(err.status === 403 ? 403 : 401).json({ error: err.message });
+  }
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Neispravan JSON' });
+  }
+  console.error(err);
+  res.status(500).send('Greška na serveru');
 });
 
 async function start() {
