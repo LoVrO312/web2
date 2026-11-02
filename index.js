@@ -23,6 +23,23 @@ const checkToken = jwtCheck({
   issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
 });
 
+const toJson = (p) => ({
+  id: p.id,
+  name: p.name,
+  document: p.document,
+  issuedAt: p.issued_at,
+  status: p.status,
+});
+
+async function findPass(id) {
+  try {
+    const { rows } = await db.query('SELECT * FROM passes WHERE id = $1', [id]);
+    return rows[0] || null;
+  } catch (err) {
+    if (err.code === '22P02') return null; // Ako ulaz ne bude oblika UUID
+    throw err;
+  }
+}
 
 app.get('/', async (req, res) => {
   const { rows } = await db.query(
@@ -50,6 +67,13 @@ app.post('/passes', checkToken, requiredScopes('create:passes'), express.json(),
   const png = await QRCode.toBuffer(`${BASE_URL}/info/${id}`);
   res.status(201).location(`${BASE_URL}/passes/${id}`).type('image/png').send(png);
 });
+
+app.get('/passes/:id', checkToken, requiredScopes('read:passes'), async (req, res) => {
+  const p = await findPass(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Propusnica ne postoji' });
+  res.json(toJson(p));
+});
+
 
 app.use((err, req, res, next) => {
   if (err instanceof UnauthorizedError) {
