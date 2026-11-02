@@ -6,6 +6,7 @@ const QRCode = require('qrcode');
 const { auth: jwtCheck, requiredScopes, UnauthorizedError } = require('express-oauth2-jwt-bearer');
 const { auth, requiresAuth } = require('express-openid-connect');
 
+
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 
@@ -16,6 +17,7 @@ const db = new Pool({
 });
 
 const app = express();
+app.set('trust proxy', 1); // render je iza https proxyja
 
 // OIDC prijava automatski dodaje rute /login i /logout
 app.use(auth({
@@ -29,7 +31,6 @@ app.use(auth({
   authorizationParams: { response_type: 'code', scope: 'openid profile email' },
 }));
 
-// Provjerava M2M token: potpis, issuer, audience i rok trajanja
 const checkToken = jwtCheck({
   audience: process.env.AUTH0_AUDIENCE,
   issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
