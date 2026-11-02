@@ -52,6 +52,21 @@ app.get('/', async (req, res) => {
   `);
 });
 
+// Adresa iz QR koda
+app.get('/info/:id', async (req, res) => {
+  const p = await findPass(req.params.id);
+  if (!p) {
+    return res.status(404).send('<h1>Propusnica ne postoji</h1>');
+  }
+  res.send(`
+    <h1>Propusnica</h1>
+    <p>Status: <b>${p.status}</b></p>
+    <p>Ime i prezime: ${p.name}</p>
+    <p>Dokument: ${p.document}</p>
+    <p>Vrijeme izdavanja: ${p.issued_at.toISOString()}</p>
+  `);
+});
+
 app.post('/passes', checkToken, requiredScopes('create:passes'), express.json(), async (req, res) => {
   const { name, document } = req.body || {};
   if (typeof name !== 'string' || !name.trim() || typeof document !== 'string' || !document.trim()) {
