@@ -4,7 +4,7 @@ const { Pool } = require('pg');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 const { auth: jwtCheck, requiredScopes, UnauthorizedError } = require('express-oauth2-jwt-bearer');
-const { auth } = require('express-openid-connect');
+const { auth, requiresAuth } = require('express-openid-connect');
 
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
@@ -64,7 +64,7 @@ app.get('/', async (req, res) => {
     <p>Aktivnih propusnica: <b>${rows[0].active}</b></p>
     ${loggedIn
       ? `<p>Prijavljeni ste kao ${req.oidc.user.email || req.oidc.user.name}.</p>
-         <p><a href="/logout">Odjava</a></p>`
+         <p><a href="/admin">Pregled propusnica</a> | <a href="/logout">Odjava</a></p>`
       : `<p><a href="/login">Prijava</a></p>`}
   `);
 });
@@ -82,6 +82,53 @@ app.get('/info/:id', async (req, res) => {
     <p>Dokument: ${p.document}</p>
     <p>Vrijeme izdavanja: ${p.issued_at.toISOString()}</p>
   `);
+});
+
+// requiresAuth(): neprijavljenog korisnika šalje na prijavu
+app.get('/admin', requiresAuth(), async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM passes ORDER BY issued_at DESC');
+  const list = rows.map((p) => `
+    <tr>
+      <td><a href="/info/${p.id}">${p.id}</a></td>
+      <td>${p.name}</td>
+      <td>${p.document}</td>
+      <td>${p.issued_at.toISOString()}</td>
+      <td>${p.status}</td>
+      <td>
+        ${p.status === 'ACTIVE'
+          ? `<form method="post" action="/admin/${p.id}/cancel" style="display:inline">
+               <button>Poništi</button>
+             </form>`
+          : ''}
+        <form method="post" action="/admin/${p.id}/delete" style="display:inline"
+              onsubmit="return confirm('Obrisati propusnicu?')">
+          <button>Obriši</button>
+        </form>
+      </td>
+    </tr>`).join('');
+
+  res.send(`
+    <p><a href="/">Početna</a> | <a href="/logout">Odjava</a></p>
+    <h1>Propusnice</h1>
+    <table border="1" cellpadding="6" style="border-collapse:collapse">
+      <tr><th>ID</th><th>Ime i prezime</th><th>Dokument</th><th>Izdana</th><th>Status</th><th></th></tr>
+      ${list || '<tr><td colspan="6">Nema propusnica</td></tr>'}
+    </table>
+  `);
+});
+
+app.post('/admin/:id/cancel', requiresAuth(), async (req, res) => {
+  if (await findPass(req.params.id)) {
+    await db.query("UPDATE passes SET status = 'CANCELLED' WHERE id = $1", [req.params.id]);
+  }
+  res.redirect('/admin');
+});
+
+app.post('/admin/:id/delete', requiresAuth(), async (req, res) => {
+  if (await findPass(req.params.id)) {
+    await db.query('DELETE FROM passes WHERE id = $1', [req.params.id]);
+  }
+  res.redirect('/admin');
 });
 
 app.post('/passes', checkToken, requiredScopes('create:passes'), express.json(), async (req, res) => {
@@ -115,7 +162,7 @@ app.use((err, req, res, next) => {
   if (err.type === 'entity.parse.failed') {
     return res.status(400).json({ error: 'Neispravan JSON' });
   }
-  console.error(err);
+  console.error(err); 
   res.status(500).send('Greška na serveru');
 });
 
